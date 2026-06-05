@@ -52,8 +52,8 @@ h1{font-size:22px;font-weight:600;margin-bottom:4px;}
 .dt-group{display:grid;grid-template-columns:52px 36px 36px 52px;gap:3px;}
 .dt-sep{font-size:11px;color:var(--tx3);align-self:center;text-align:center;line-height:1;}
 /* income row: label | goal | dt-group | value | ok | del */
-.ihdr{display:grid;grid-template-columns:100px 1fr 192px 90px 42px 28px;gap:6px;margin-bottom:5px;align-items:end;}
-.irow{display:grid;grid-template-columns:100px 1fr 192px 90px 42px 28px;gap:6px;align-items:center;margin-bottom:8px;}
+.ihdr{display:grid;grid-template-columns:92px 1fr 96px 192px 84px 42px 28px;gap:6px;margin-bottom:5px;align-items:end;}
+.irow{display:grid;grid-template-columns:92px 1fr 96px 192px 84px 42px 28px;gap:6px;align-items:center;margin-bottom:8px;}
 /* expense row: name | qty | price | pay | dt-group | total | ok | del */
 .ehdr{display:grid;grid-template-columns:1fr 52px 80px 90px 192px 72px 42px 28px;gap:5px;margin-bottom:5px;align-items:end;}
 .erow{display:grid;grid-template-columns:1fr 52px 80px 90px 192px 72px 42px 28px;gap:5px;align-items:center;margin-bottom:8px;}
@@ -123,6 +123,7 @@ h1{font-size:22px;font-weight:600;margin-bottom:4px;}
     <div class="ihdr">
       <span class="cl">Источник</span>
       <span class="cl">Цель / комментарий</span>
+      <span class="cl">Куда</span>
       <span style="padding:0 2px">
         <div style="font-size:10px;color:var(--tx3);margin-bottom:2px">Дата и время</div>
         <div class="dt-hdr-lbl"><span class="dt-sub">ЧЧ:ММ</span><span class="dt-sub">ДД</span><span class="dt-sub">ММ</span><span class="dt-sub">ГГГГ</span></div>
@@ -199,7 +200,7 @@ function nowDT(){
   return {time:pad(n.getHours())+':'+pad(n.getMinutes()),day:String(n.getDate()),mon:String(n.getMonth()+1),year:String(n.getFullYear())};
 }
 
-const mkI=()=>[{label:'Зарплата',goal:'',value:'',...nowDT()},{label:'Другое',goal:'',value:'',...nowDT()}];
+const mkI=()=>[{label:'Зарплата',goal:'',to:'card1',value:'',...nowDT()},{label:'Другое',goal:'',to:'card1',value:'',...nowDT()}];
 const mkE=()=>[{name:'',qty:'1',price:'',pay:'card1',...nowDT()}];
 const mkO=()=>[];
 
@@ -257,11 +258,11 @@ function renameCards(){
   document.getElementById('c1-top').textContent=c1();
   document.getElementById('c2-top').textContent=c2();
   document.getElementById('c3-top').textContent=c3();
-  document.querySelectorAll('.pay-sel').forEach(s=>{s.options[0].text=c1();s.options[1].text=c2();s.options[2].text=c3();});
+  document.querySelectorAll('.pay-sel,.inc-to').forEach(s=>{s.options[0].text=c1();s.options[1].text=c2();s.options[2].text=c3();});
   markDirty();recalc();
 }
 
-function addIncome(){incomes.push({label:'Источник',goal:'',value:'',...nowDT()});render();markDirty();}
+function addIncome(){incomes.push({label:'Источник',goal:'',to:'card1',value:'',...nowDT()});render();markDirty();}
 function addExpense(){expenses.push({name:'',qty:'1',price:'',pay:'card1',...nowDT()});render();markDirty();}
 function addOp(key){ops[key].push({label:'',type:'plus',value:''});renderOps();markDirty();}
 
@@ -322,6 +323,12 @@ function render(){
     row.className='irow';
     row.innerHTML=`<input class="lbl-inp" value="${esc(inc.label)}" oninput="incomes[${i}].label=this.value;markDirty()" placeholder="Источник">
 <input class="inp" value="${esc(inc.goal)}" oninput="incomes[${i}].goal=this.value;markDirty()" placeholder="Цель / на что">
+<select class="sel inc-to${inc.to==='cash'?' cash':''}" onchange="incomes[${i}].to=this.value;this.className='sel inc-to'+(this.value==='cash'?' cash':'');recalc();markDirty()" style="min-width:0;font-size:12px">
+  <option value="card1"${inc.to==='card1'?' selected':''}>${c1()}</option>
+  <option value="card2"${inc.to==='card2'?' selected':''}>${c2()}</option>
+  <option value="card3"${inc.to==='card3'?' selected':''}>${c3()}</option>
+  <option value="cash"${inc.to==='cash'?' selected':''}>💵 Нал.</option>
+</select>
 ${dtHtml('incomes',i)}
 <input type="number" class="inp inpr" value="${esc(inc.value)}" oninput="incomes[${i}].value=this.value;recalc();markDirty()" placeholder="0">
 <button class="ok-btn" id="iok-${i}" onclick="okSave('iok-${i}')">ОК</button>
@@ -429,14 +436,19 @@ function recalc(){
   const totalOpsInc =allKeys.reduce((s,k)=>s+opsPlus(k),0);
   const totalOpsMinus=allKeys.reduce((s,k)=>s+opsMinus(k),0);
 
-  // Баланс каждой карты/наличных
-  const opsBal=key=>opsPlus(key)-opsMinus(key);
-  const c1Bal=opsBal('card1')-c1s;
-  const c2Bal=opsBal('card2')-c2s;
-  const c3Bal=opsBal('card3')-c3s;
-  const cashBal=cashInit()+opsBal('cash')-cashSp;
+  // --- Балансы карт считаем по ВСЕМ данным (не по фильтру), чтобы остаток был реальным ---
+  // приход на карту = доходы, направленные на неё (поле .to)
+  const incTo=key=>incomes.filter(x=>(x.to||'card1')===key).reduce((s,x)=>s+(parseFloat(x.value)||0),0);
+  // расход с карты = все покупки с этим способом оплаты
+  const expFrom=key=>expenses.filter(x=>x.pay===key).reduce((s,x)=>s+((parseFloat(x.qty)||1)*(parseFloat(x.price)||0)),0);
 
-  // Общий итог: все доходы + все пополнения − все расходы − все снятия
+  const opsBal=key=>opsPlus(key)-opsMinus(key);
+  const c1Bal=incTo('card1')+opsBal('card1')-expFrom('card1');
+  const c2Bal=incTo('card2')+opsBal('card2')-expFrom('card2');
+  const c3Bal=incTo('card3')+opsBal('card3')-expFrom('card3');
+  const cashBal=cashInit()+incTo('cash')+opsBal('cash')-expFrom('cash');
+
+  // Общий итог: все доходы + все пополнения − все расходы − все снятия (за выбранный период)
   const grandInc =totalInc+totalOpsInc;
   const grandExp =totalExp+totalOpsMinus;
   const bal=grandInc-grandExp;
@@ -475,7 +487,7 @@ function buildRows(){
   // время сохраняем с префиксом апострофа, чтобы Sheets не превращал "00:32" в дату
   const T=t=>t?("'"+t):'';
   const R=[['section','period','idx','f1','f2','f3','f4','f5','f6','f7']];
-  incomes.forEach((r,i)=>R.push(['income','all',i,r.label,r.goal,r.value,T(r.time),r.day||'',r.mon||'',r.year||'']));
+  incomes.forEach((r,i)=>R.push(['income','all',i,r.label,r.goal,(r.value||'')+'|'+(r.to||'card1'),T(r.time),r.day||'',r.mon||'',r.year||'']));
   expenses.forEach((r,i)=>R.push(['expense','all',i,r.name,r.qty+'|'+r.price+'|'+r.pay,T(r.time),r.day||'',r.mon||'',r.year||'','']));
   ['card1','card2','card3','cash'].forEach(k=>ops[k].forEach((o,i)=>R.push(['op','all',i,k,o.label,o.type,o.value,'','',''])));
   R.push(['setting','all',0,'c1name',c1(),'','','','','']);
@@ -532,7 +544,7 @@ async function loadFromSheets(){
     rows.forEach(r=>{
       const[sec,per,idx,f1,f2,f3,f4,f5,f6,f7]=r.map(v=>v==null?'':String(v));
       // принимаем и старый формат (weekly/monthly), и новый (all) — всё сливается в один список
-      if(sec==='income')incomes.push({label:f1,goal:f2,value:f3,time:cleanTime(f4),day:f5,mon:f6,year:f7});
+      if(sec==='income'){const vp=(f3||'').split('|');incomes.push({label:f1,goal:f2,value:vp[0]||'',to:vp[1]||'card1',time:cleanTime(f4),day:f5,mon:f6,year:f7});}
       if(sec==='expense')expenses.push({name:f1,qty:(f2||'1|0|card1').split('|')[0],price:(f2||'1|0|card1').split('|')[1],pay:(f2||'1|0|card1').split('|')[2]||'card1',time:cleanTime(f3),day:f4,mon:f5,year:f6});
       if(sec==='op'&&ops[f1])ops[f1].push({label:f2,type:f3,value:f4});
       if(sec==='setting'){
