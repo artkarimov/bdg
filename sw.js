@@ -1,6 +1,6 @@
 // Service Worker — кэширует оболочку приложения для офлайн-работы.
 // Данные грузятся из Google Sheets и НЕ кэшируются (всегда свежие).
-const CACHE = 'budget-app-v1';
+const CACHE = 'budget-app-v2';
 const SHELL = ['index.html', 'manifest.json', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {

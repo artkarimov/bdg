@@ -112,8 +112,9 @@ h1{font-size:22px;font-weight:600;margin-bottom:4px;}
   </div>
 
   <div class="tabs">
-    <button class="tab active" onclick="setPeriod('weekly')">📅 Неделя</button>
-    <button class="tab" onclick="setPeriod('monthly')">🗓️ Месяц</button>
+    <button class="tab active" onclick="setFilter('week')">📅 Эта неделя</button>
+    <button class="tab" onclick="setFilter('month')">🗓️ Этот месяц</button>
+    <button class="tab" onclick="setFilter('all')">∞ Всё время</button>
   </div>
 
   <!-- ДОХОДЫ -->
@@ -175,7 +176,7 @@ h1{font-size:22px;font-weight:600;margin-bottom:4px;}
 
   <!-- ИТОГИ -->
   <div class="card">
-    <div class="ch"><span class="ct">📊 Итоги</span></div>
+    <div class="ch"><span class="ct">📊 Итоги</span><span class="badge" id="filter-cap" style="background:var(--sf2);color:var(--tx2)">эта неделя</span></div>
     <div class="tgrid">
       <div class="tc"><div class="tl">Доходы</div><div class="tv cg" id="sum-inc">0</div><div style="font-size:10px;color:var(--tx3)">UZS</div></div>
       <div class="tc"><div class="tl">Расходы</div><div class="tv cr" id="sum-exp">0</div><div style="font-size:10px;color:var(--tx3)">UZS</div></div>
@@ -190,7 +191,7 @@ h1{font-size:22px;font-weight:600;margin-bottom:4px;}
 
 <script>
 const SHEET_ID='1g6dsOvy1yizDJ0yTzeZH_BPXrIxplaRj7wQh5W84AAk';
-let period='weekly',dirty=false;
+let filter='week',dirty=false;
 
 function nowDT(){
   const n=new Date();
@@ -202,8 +203,35 @@ const mkI=()=>[{label:'Зарплата',goal:'',value:'',...nowDT()},{label:'Д
 const mkE=()=>[{name:'',qty:'1',price:'',pay:'card1',...nowDT()}];
 const mkO=()=>[];
 
-let data={weekly:{incomes:mkI(),expenses:mkE()},monthly:{incomes:mkI(),expenses:mkE()}};
+// Плоская модель: один список доходов и один список расходов, период определяется по дате записи
+let incomes=mkI();
+let expenses=mkE();
 let ops={card1:mkO(),card2:mkO(),card3:mkO(),cash:mkO()};
+
+// --- Фильтр по дате ---
+// Возвращает Date из полей записи, или null если дата неполная
+function recDate(r){
+  const d=parseInt(r.day),m=parseInt(r.mon),y=parseInt(r.year);
+  if(!d||!m||!y)return null;
+  return new Date(y,m-1,d);
+}
+function inFilter(r){
+  if(filter==='all')return true;
+  const dt=recDate(r);
+  if(!dt)return true; // записи без даты показываем всегда
+  const now=new Date();now.setHours(0,0,0,0);
+  if(filter==='month'){
+    return dt.getMonth()===now.getMonth()&&dt.getFullYear()===now.getFullYear();
+  }
+  if(filter==='week'){
+    // понедельник текущей недели
+    const dow=(now.getDay()+6)%7; // 0=Пн
+    const monday=new Date(now);monday.setDate(now.getDate()-dow);
+    const sunday=new Date(monday);sunday.setDate(monday.getDate()+6);sunday.setHours(23,59,59,999);
+    return dt>=monday&&dt<=sunday;
+  }
+  return true;
+}
 
 const fmt=n=>Math.round(n).toLocaleString('ru-RU');
 const c1=()=>document.getElementById('c1-name').value||'Карта 1';
@@ -218,9 +246,10 @@ function setSS(st,msg){
 }
 function markDirty(){dirty=true;setSS('amber','Есть несохранённые изменения');}
 
-function setPeriod(p){
-  period=p;
-  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',(i===0&&p==='weekly')||(i===1&&p==='monthly')));
+function setFilter(f){
+  filter=f;
+  const idx={week:0,month:1,all:2}[f];
+  document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',i===idx));
   render();
 }
 
@@ -232,8 +261,8 @@ function renameCards(){
   markDirty();recalc();
 }
 
-function addIncome(){data[period].incomes.push({label:'Источник',goal:'',value:'',...nowDT()});render();markDirty();}
-function addExpense(){data[period].expenses.push({name:'',qty:'1',price:'',pay:'card1',...nowDT()});render();markDirty();}
+function addIncome(){incomes.push({label:'Источник',goal:'',value:'',...nowDT()});render();markDirty();}
+function addExpense(){expenses.push({name:'',qty:'1',price:'',pay:'card1',...nowDT()});render();markDirty();}
 function addOp(key){ops[key].push({label:'',type:'plus',value:''});renderOps();markDirty();}
 
 async function sheetsSave(btn,resetText){
@@ -270,67 +299,70 @@ async function addAndSave(type){
   await sheetsSave(btn,resetText);
 }
 
-/* datetime input cluster */
-function dtHtml(store,idx,type){
-  // store = "data['weekly'].incomes" or "data['weekly'].expenses"
-  const base=`${store}[${idx}]`;
+/* datetime input cluster — arr: 'incomes'|'expenses', i: реальный индекс */
+function dtHtml(arr,i){
+  const rec=(arr==='incomes'?incomes:expenses)[i];
   return `<div class="dt-group">
-<input class="inp" value="${esc(eval(base+'.time'))}" oninput="${base}.time=this.value;markDirty()" placeholder="ЧЧ:ММ" maxlength="5" style="min-width:0;font-size:12px;padding:5px 4px;text-align:center">
-<input type="number" class="inp inpr" value="${esc(eval(base+'.day'))}" min="1" max="31" oninput="${base}.day=this.value;markDirty()" placeholder="ДД" style="min-width:0;font-size:12px;padding:5px 3px">
-<input type="number" class="inp inpr" value="${esc(eval(base+'.mon'))}" min="1" max="12" oninput="${base}.mon=this.value;markDirty()" placeholder="ММ" style="min-width:0;font-size:12px;padding:5px 3px">
-<input type="number" class="inp inpr" value="${esc(eval(base+'.year'))}" min="2020" max="2099" oninput="${base}.year=this.value;markDirty()" placeholder="ГГГГ" style="min-width:0;font-size:12px;padding:5px 3px">
+<input class="inp" value="${esc(rec.time)}" oninput="${arr}[${i}].time=this.value;markDirty()" placeholder="ЧЧ:ММ" maxlength="5" style="min-width:0;font-size:12px;padding:5px 4px;text-align:center">
+<input type="number" class="inp inpr" value="${esc(rec.day)}" min="1" max="31" oninput="${arr}[${i}].day=this.value;markDirty()" placeholder="ДД" style="min-width:0;font-size:12px;padding:5px 3px">
+<input type="number" class="inp inpr" value="${esc(rec.mon)}" min="1" max="12" oninput="${arr}[${i}].mon=this.value;markDirty()" placeholder="ММ" style="min-width:0;font-size:12px;padding:5px 3px">
+<input type="number" class="inp inpr" value="${esc(rec.year)}" min="2020" max="2099" oninput="${arr}[${i}].year=this.value;markDirty()" placeholder="ГГГГ" style="min-width:0;font-size:12px;padding:5px 3px">
 </div>`;
 }
 
 function render(){
-  const d=data[period];
-
-  // INCOMES
+  // INCOMES — показываем только подходящие по фильтру, но редактируем по реальному индексу i
   const ir=document.getElementById('inc-rows');
   ir.innerHTML='';
-  d.incomes.forEach((inc,i)=>{
+  let incShown=0;
+  incomes.forEach((inc,i)=>{
+    if(!inFilter(inc))return;
+    incShown++;
     const row=document.createElement('div');
     row.className='irow';
-    const dtB=`data['${period}'].incomes`;
-    row.innerHTML=`<input class="lbl-inp" value="${esc(inc.label)}" oninput="data['${period}'].incomes[${i}].label=this.value;markDirty()" placeholder="Источник">
-<input class="inp" value="${esc(inc.goal)}" oninput="data['${period}'].incomes[${i}].goal=this.value;markDirty()" placeholder="Цель / на что">
-${dtHtml(dtB,i,'income')}
-<input type="number" class="inp inpr" value="${esc(inc.value)}" oninput="data['${period}'].incomes[${i}].value=this.value;recalc();markDirty()" placeholder="0">
+    row.innerHTML=`<input class="lbl-inp" value="${esc(inc.label)}" oninput="incomes[${i}].label=this.value;markDirty()" placeholder="Источник">
+<input class="inp" value="${esc(inc.goal)}" oninput="incomes[${i}].goal=this.value;markDirty()" placeholder="Цель / на что">
+${dtHtml('incomes',i)}
+<input type="number" class="inp inpr" value="${esc(inc.value)}" oninput="incomes[${i}].value=this.value;recalc();markDirty()" placeholder="0">
 <button class="ok-btn" id="iok-${i}" onclick="okSave('iok-${i}')">ОК</button>
-<button class="del" onclick="data['${period}'].incomes.splice(${i},1);render();markDirty()">×</button>`;
+<button class="del" onclick="incomes.splice(${i},1);render();markDirty()">×</button>`;
     ir.appendChild(row);
   });
+  if(incShown===0){const e=document.createElement('div');e.style.cssText='font-size:13px;color:var(--tx3);padding:8px 2px';e.textContent='Нет доходов за выбранный период';ir.appendChild(e);}
 
   // EXPENSES
   const er=document.getElementById('exp-rows');
   er.innerHTML='';
-  d.expenses.forEach((exp,i)=>{
+  let expShown=0;
+  expenses.forEach((exp,i)=>{
+    if(!inFilter(exp))return;
+    expShown++;
     const tot=(parseFloat(exp.qty)||1)*(parseFloat(exp.price)||0);
     const row=document.createElement('div');
     row.className='erow';
-    const dtB=`data['${period}'].expenses`;
-    row.innerHTML=`<input class="inp" value="${esc(exp.name)}" oninput="data['${period}'].expenses[${i}].name=this.value;markDirty()" placeholder="Товар / услуга" style="min-width:0">
-<input type="number" class="inp inpr" value="${esc(exp.qty)}" min="1" step="1" oninput="data['${period}'].expenses[${i}].qty=this.value;updTot(${i});recalc();markDirty()" placeholder="1" style="min-width:0">
-<input type="number" class="inp inpr" value="${esc(exp.price)}" oninput="data['${period}'].expenses[${i}].price=this.value;updTot(${i});recalc();markDirty()" placeholder="0" style="min-width:0">
-<select class="sel pay-sel${exp.pay==='cash'?' cash':''}" onchange="data['${period}'].expenses[${i}].pay=this.value;this.className='sel pay-sel'+(this.value==='cash'?' cash':'');recalc();markDirty()" style="min-width:0;font-size:12px">
+    row.innerHTML=`<input class="inp" value="${esc(exp.name)}" oninput="expenses[${i}].name=this.value;markDirty()" placeholder="Товар / услуга" style="min-width:0">
+<input type="number" class="inp inpr" value="${esc(exp.qty)}" min="1" step="1" oninput="expenses[${i}].qty=this.value;updTot(${i});recalc();markDirty()" placeholder="1" style="min-width:0">
+<input type="number" class="inp inpr" value="${esc(exp.price)}" oninput="expenses[${i}].price=this.value;updTot(${i});recalc();markDirty()" placeholder="0" style="min-width:0">
+<select class="sel pay-sel${exp.pay==='cash'?' cash':''}" onchange="expenses[${i}].pay=this.value;this.className='sel pay-sel'+(this.value==='cash'?' cash':'');recalc();markDirty()" style="min-width:0;font-size:12px">
   <option value="card1"${exp.pay==='card1'?' selected':''}>${c1()}</option>
   <option value="card2"${exp.pay==='card2'?' selected':''}>${c2()}</option>
   <option value="card3"${exp.pay==='card3'?' selected':''}>${c3()}</option>
   <option value="cash"${exp.pay==='cash'?' selected':''}>💵 Нал.</option>
 </select>
-${dtHtml(dtB,i,'expense')}
+${dtHtml('expenses',i)}
 <div class="inp inpr" id="etot-${i}" style="background:var(--sf);color:var(--tx2);font-size:12px;min-width:0;cursor:default">${fmt(tot)}</div>
 <button class="ok-btn" id="eok-${i}" onclick="okSave('eok-${i}')">ОК</button>
-<button class="del" onclick="data['${period}'].expenses.splice(${i},1);render();markDirty()">×</button>`;
+<button class="del" onclick="expenses.splice(${i},1);render();markDirty()">×</button>`;
     er.appendChild(row);
   });
+  if(expShown===0){const e=document.createElement('div');e.style.cssText='font-size:13px;color:var(--tx3);padding:8px 2px';e.textContent='Нет расходов за выбранный период';er.appendChild(e);}
 
   renderOps();
   recalc();
 }
 
 function updTot(i){
-  const exp=data[period].expenses[i];
+  const exp=expenses[i];
   const el=document.getElementById('etot-'+i);
   if(el) el.textContent=fmt((parseFloat(exp.qty)||1)*(parseFloat(exp.price)||0));
 }
@@ -372,14 +404,16 @@ async function addOpAndSave(key){
 }
 
 function recalc(){
-  const d=data[period];
+  // учитываем только записи, попадающие в текущий фильтр
+  const incF=incomes.filter(inFilter);
+  const expF=expenses.filter(inFilter);
 
   // Доходы из раздела доходов
-  const totalInc=d.incomes.reduce((s,x)=>s+(parseFloat(x.value)||0),0);
+  const totalInc=incF.reduce((s,x)=>s+(parseFloat(x.value)||0),0);
 
   // Расходы по картам и наличным
   let totalExp=0,c1s=0,c2s=0,c3s=0,cashSp=0;
-  d.expenses.forEach(x=>{
+  expF.forEach(x=>{
     const t=(parseFloat(x.qty)||1)*(parseFloat(x.price)||0);
     totalExp+=t;
     if(x.pay==='card1')c1s+=t;
@@ -419,6 +453,7 @@ function recalc(){
   document.getElementById('sum-exp').textContent=fmt(grandExp);
   const sb=document.getElementById('sum-bal');sb.textContent=fmt(bal);sb.className='tv '+(bal>=0?'cg':'cr');
   const gv=document.getElementById('grand-val');gv.textContent=fmt(bal)+' UZS';gv.className='gv '+(bal>=0?'cg':'cr');
+  const cap=document.getElementById('filter-cap');if(cap)cap.textContent={week:'эта неделя',month:'этот месяц',all:'всё время'}[filter];
 }
 
 // buildRows defined above
@@ -440,10 +475,8 @@ function buildRows(){
   // время сохраняем с префиксом апострофа, чтобы Sheets не превращал "00:32" в дату
   const T=t=>t?("'"+t):'';
   const R=[['section','period','idx','f1','f2','f3','f4','f5','f6','f7']];
-  ['weekly','monthly'].forEach(p=>{
-    data[p].incomes.forEach((r,i)=>R.push(['income',p,i,r.label,r.goal,r.value,T(r.time),r.day||'',r.mon||'',r.year||'']));
-    data[p].expenses.forEach((r,i)=>R.push(['expense',p,i,r.name,r.qty+'|'+r.price+'|'+r.pay,T(r.time),r.day||'',r.mon||'',r.year||'','']));
-  });
+  incomes.forEach((r,i)=>R.push(['income','all',i,r.label,r.goal,r.value,T(r.time),r.day||'',r.mon||'',r.year||'']));
+  expenses.forEach((r,i)=>R.push(['expense','all',i,r.name,r.qty+'|'+r.price+'|'+r.pay,T(r.time),r.day||'',r.mon||'',r.year||'','']));
   ['card1','card2','card3','cash'].forEach(k=>ops[k].forEach((o,i)=>R.push(['op','all',i,k,o.label,o.type,o.value,'','',''])));
   R.push(['setting','all',0,'c1name',c1(),'','','','','']);
   R.push(['setting','all',0,'c2name',c2(),'','','','','']);
@@ -494,12 +527,13 @@ async function loadFromSheets(){
     const res=await resp.json();
     if(!res||!res.rows||res.rows.length<2){setSS('amber','Таблица пуста — введи данные и сохрани');lockBtns(false);return;}
     const rows=res.rows.slice(1);
-    data={weekly:{incomes:[],expenses:[]},monthly:{incomes:[],expenses:[]}};
+    incomes=[];expenses=[];
     ops={card1:[],card2:[],card3:[],cash:[]};
     rows.forEach(r=>{
       const[sec,per,idx,f1,f2,f3,f4,f5,f6,f7]=r.map(v=>v==null?'':String(v));
-      if(sec==='income'&&data[per])data[per].incomes.push({label:f1,goal:f2,value:f3,time:cleanTime(f4),day:f5,mon:f6,year:f7});
-      if(sec==='expense'&&data[per])data[per].expenses.push({name:f1,qty:(f2||'1|0|card1').split('|')[0],price:(f2||'1|0|card1').split('|')[1],pay:(f2||'1|0|card1').split('|')[2]||'card1',time:cleanTime(f3),day:f4,mon:f5,year:f6});
+      // принимаем и старый формат (weekly/monthly), и новый (all) — всё сливается в один список
+      if(sec==='income')incomes.push({label:f1,goal:f2,value:f3,time:cleanTime(f4),day:f5,mon:f6,year:f7});
+      if(sec==='expense')expenses.push({name:f1,qty:(f2||'1|0|card1').split('|')[0],price:(f2||'1|0|card1').split('|')[1],pay:(f2||'1|0|card1').split('|')[2]||'card1',time:cleanTime(f3),day:f4,mon:f5,year:f6});
       if(sec==='op'&&ops[f1])ops[f1].push({label:f2,type:f3,value:f4});
       if(sec==='setting'){
         if(f1==='c1name')document.getElementById('c1-name').value=f2;
@@ -508,7 +542,8 @@ async function loadFromSheets(){
         if(f1==='cashinit')document.getElementById('cash-init').value=f2;
       }
     });
-    ['weekly','monthly'].forEach(p=>{if(!data[p].incomes.length)data[p].incomes=mkI();if(!data[p].expenses.length)data[p].expenses=mkE();});
+    if(!incomes.length)incomes=mkI();
+    if(!expenses.length)expenses=mkE();
     render();dirty=false;setSS('green','Данные загружены из Google Sheets ✓');
   }catch(e){setSS('red','Ошибка загрузки: '+e.message);}
   lockBtns(false);
